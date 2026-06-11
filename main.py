@@ -5,6 +5,7 @@ from material_frame import MaterialFrame
 from record_frame import RecordFrame
 from restock_frame import RestockFrame
 from stats_frame import StatsFrame
+from supplier_frame import SupplierFrame
 
 
 class App(ctk.CTk):
@@ -81,6 +82,10 @@ class App(ctk.CTk):
                                           fg_color="#95a5a6", command=lambda: self._switch_tab("restock"))
         self.btn_restock.pack(side="left", padx=3)
 
+        self.btn_supplier = ctk.CTkButton(tab_frm, text="🏢 供应商对账", width=140, height=38,
+                                           fg_color="#95a5a6", command=lambda: self._switch_tab("supplier"))
+        self.btn_supplier.pack(side="left", padx=3)
+
         self.content = ctk.CTkFrame(self, fg_color="transparent")
         self.content.pack(fill="both", expand=True, padx=5, pady=5)
 
@@ -88,6 +93,7 @@ class App(ctk.CTk):
         self.material_frame = MaterialFrame(self.content)
         self.record_frame = RecordFrame(self.content)
         self.restock_frame = RestockFrame(self.content)
+        self.supplier_frame = SupplierFrame(self.content)
 
         self._switch_tab("stats")
 
@@ -108,11 +114,13 @@ class App(ctk.CTk):
         self.material_frame.pack_forget()
         self.record_frame.pack_forget()
         self.restock_frame.pack_forget()
+        self.supplier_frame.pack_forget()
 
         self.btn_stats.configure(fg_color="#95a5a6")
         self.btn_material.configure(fg_color="#95a5a6")
         self.btn_record.configure(fg_color="#95a5a6")
         self.btn_restock.configure(fg_color="#95a5a6")
+        self.btn_supplier.configure(fg_color="#95a5a6")
 
         if name == "stats":
             self.stats_frame.pack(fill="both", expand=True)
@@ -130,6 +138,10 @@ class App(ctk.CTk):
             self.restock_frame.pack(fill="both", expand=True)
             self.btn_restock.configure(fg_color="#347ab8")
             self.restock_frame.refresh()
+        elif name == "supplier":
+            self.supplier_frame.pack(fill="both", expand=True)
+            self.btn_supplier.configure(fg_color="#347ab8")
+            self.supplier_frame.refresh_all()
 
         self._update_header_info()
 

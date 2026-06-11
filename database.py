@@ -1,6 +1,6 @@
 import sqlite3
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import List, Dict, Optional, Tuple
 
 
@@ -48,17 +48,54 @@ def init_db():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS suppliers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            supplier_code TEXT UNIQUE NOT NULL,
+            supplier_name TEXT NOT NULL,
+            contact_person TEXT,
+            contact_phone TEXT,
+            address TEXT,
+            bank_account TEXT,
+            tax_number TEXT,
+            credit_limit REAL NOT NULL DEFAULT 0,
+            payment_days INTEGER NOT NULL DEFAULT 30,
+            supplier_status TEXT NOT NULL DEFAULT '正常',
+            remark TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS purchase_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            purchase_id INTEGER NOT NULL,
+            supplier_id INTEGER NOT NULL,
+            payable_amount REAL NOT NULL DEFAULT 0,
+            paid_amount REAL NOT NULL DEFAULT 0,
+            payment_date TEXT,
+            payment_status TEXT NOT NULL DEFAULT '未付款',
+            remark TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (purchase_id) REFERENCES stock_purchases(id),
+            FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS stock_purchases (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             purchase_date TEXT NOT NULL,
             material_id INTEGER NOT NULL,
             supplier TEXT NOT NULL,
+            supplier_id INTEGER,
             purchase_quantity INTEGER NOT NULL,
             unit_price REAL NOT NULL,
             total_amount REAL NOT NULL,
             remark TEXT,
             created_at TEXT NOT NULL,
-            FOREIGN KEY (material_id) REFERENCES materials(id)
+            FOREIGN KEY (material_id) REFERENCES materials(id),
+            FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
         )
     """)
 
@@ -934,3 +971,550 @@ def get_high_loss_high_cost_materials(start_date: str = "", end_date: str = "", 
     result.sort(key=lambda x: x["score"], reverse=True)
     conn.close()
     return result[:top_n]
+
+
+def validate_supplier(data: Dict) -> Tuple[bool, str]:
+    if not data.get("supplier_code"):
+        return False, "供应商编号不能为空"
+    if not data.get("supplier_name"):
+        return False, "供应商名称不能为空"
+    credit_limit = data.get("credit_limit", 0)
+    if credit_limit < 0:
+        return False, "信用额度必须大于等于 0"
+    payment_days = data.get("payment_days", 30)
+    if payment_days < 0:
+        return False, "账期天数必须大于等于 0"
+    return True, ""
+
+
+def add_supplier(data: Dict) -> Tuple[bool, str]:
+    valid, msg = validate_supplier(data)
+    if not valid:
+        return False, msg
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """INSERT INTO suppliers (supplier_code, supplier_name, contact_person, contact_phone,
+               address, bank_account, tax_number, credit_limit, payment_days, supplier_status, remark, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                data["supplier_code"],
+                data["supplier_name"],
+                data.get("contact_person", ""),
+                data.get("contact_phone", ""),
+                data.get("address", ""),
+                data.get("bank_account", ""),
+                data.get("tax_number", ""),
+                data.get("credit_limit", 0),
+                data.get("payment_days", 30),
+                data.get("supplier_status", "正常"),
+                data.get("remark", ""),
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+        )
+        conn.commit()
+        return True, "添加成功"
+    except sqlite3.IntegrityError:
+        return False, "供应商编号已存在，不能重复"
+    finally:
+        conn.close()
+
+
+def update_supplier(supplier_id: int, data: Dict) -> Tuple[bool, str]:
+    valid, msg = validate_supplier(data)
+    if not valid:
+        return False, msg
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """UPDATE suppliers SET supplier_code=?, supplier_name=?, contact_person=?, contact_phone=?,
+               address=?, bank_account=?, tax_number=?, credit_limit=?, payment_days=?, supplier_status=?, remark=?
+               WHERE id=?""",
+            (
+                data["supplier_code"],
+                data["supplier_name"],
+                data.get("contact_person", ""),
+                data.get("contact_phone", ""),
+                data.get("address", ""),
+                data.get("bank_account", ""),
+                data.get("tax_number", ""),
+                data.get("credit_limit", 0),
+                data.get("payment_days", 30),
+                data.get("supplier_status", "正常"),
+                data.get("remark", ""),
+                supplier_id,
+            ),
+        )
+        conn.commit()
+        return True, "更新成功"
+    except sqlite3.IntegrityError:
+        return False, "供应商编号已存在，不能重复"
+    finally:
+        conn.close()
+
+
+def delete_supplier(supplier_id: int) -> Tuple[bool, str]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT COUNT(*) FROM purchase_payments WHERE supplier_id=?", (supplier_id,))
+        if cursor.fetchone()[0] > 0:
+            return False, "该供应商存在付款记录，无法删除"
+        cursor.execute("SELECT COUNT(*) FROM stock_purchases WHERE supplier_id=?", (supplier_id,))
+        if cursor.fetchone()[0] > 0:
+            return False, "该供应商存在采购记录，无法删除"
+        cursor.execute("DELETE FROM suppliers WHERE id=?", (supplier_id,))
+        conn.commit()
+        return True, "删除成功"
+    finally:
+        conn.close()
+
+
+def get_suppliers(keyword: str = "", status: str = "") -> List[sqlite3.Row]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = "SELECT * FROM suppliers WHERE 1=1"
+    params = []
+    if keyword:
+        query += " AND (supplier_code LIKE ? OR supplier_name LIKE ? OR contact_person LIKE ? OR contact_phone LIKE ?)"
+        like = f"%{keyword}%"
+        params.extend([like, like, like, like])
+    if status and status != "全部":
+        query += " AND supplier_status = ?"
+        params.append(status)
+    query += " ORDER BY supplier_code"
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_supplier_by_id(supplier_id: int) -> Optional[sqlite3.Row]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM suppliers WHERE id=?", (supplier_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+
+def get_supplier_by_code(code: str) -> Optional[sqlite3.Row]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM suppliers WHERE supplier_code=?", (code,))
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+
+def validate_purchase_payment(data: Dict) -> Tuple[bool, str]:
+    if not data.get("purchase_id"):
+        return False, "请选择采购记录"
+    if not data.get("supplier_id"):
+        return False, "请选择供应商"
+    payable = data.get("payable_amount", 0)
+    if payable <= 0:
+        return False, "应付金额必须大于 0"
+    paid = data.get("paid_amount", 0)
+    if paid < 0:
+        return False, "已付金额不能小于 0"
+    if paid > payable + 0.01:
+        return False, f"已付金额({paid})不能超过应付金额({payable})"
+    status = data.get("payment_status", "未付款")
+    if status not in ("未付款", "部分付款", "已付款", "逾期"):
+        return False, "无效的付款状态"
+    return True, ""
+
+
+def _calc_payment_status(payable: float, paid: float, due_date: str = "") -> str:
+    if abs(paid - payable) <= 0.01 and paid > 0:
+        return "已付款"
+    if paid > 0:
+        return "部分付款"
+    if due_date:
+        try:
+            due = datetime.strptime(due_date, "%Y-%m-%d").date()
+            if due < date.today():
+                return "逾期"
+        except Exception:
+            pass
+    return "未付款"
+
+
+def add_purchase_payment(data: Dict) -> Tuple[bool, str]:
+    valid, msg = validate_purchase_payment(data)
+    if not valid:
+        return False, msg
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT COUNT(*) FROM purchase_payments WHERE purchase_id=?", (data["purchase_id"],))
+        if cursor.fetchone()[0] > 0:
+            return False, "该采购记录已存在付款记录，请使用编辑功能"
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        status = data.get("payment_status") or _calc_payment_status(
+            data["payable_amount"], data.get("paid_amount", 0), data.get("due_date", "")
+        )
+        cursor.execute(
+            """INSERT INTO purchase_payments (purchase_id, supplier_id, payable_amount, paid_amount,
+               payment_date, payment_status, remark, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                data["purchase_id"],
+                data["supplier_id"],
+                data["payable_amount"],
+                data.get("paid_amount", 0),
+                data.get("payment_date") or None,
+                status,
+                data.get("remark", ""),
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+        return True, "付款记录添加成功"
+    except Exception as e:
+        return False, f"添加失败: {e}"
+    finally:
+        conn.close()
+
+
+def update_purchase_payment(payment_id: int, data: Dict) -> Tuple[bool, str]:
+    valid, msg = validate_purchase_payment(data)
+    if not valid:
+        return False, msg
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        status = data.get("payment_status") or _calc_payment_status(
+            data["payable_amount"], data.get("paid_amount", 0), data.get("due_date", "")
+        )
+        cursor.execute(
+            """UPDATE purchase_payments SET supplier_id=?, payable_amount=?, paid_amount=?,
+               payment_date=?, payment_status=?, remark=?, updated_at=? WHERE id=?""",
+            (
+                data["supplier_id"],
+                data["payable_amount"],
+                data.get("paid_amount", 0),
+                data.get("payment_date") or None,
+                status,
+                data.get("remark", ""),
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                payment_id,
+            ),
+        )
+        conn.commit()
+        return True, "更新成功"
+    except Exception as e:
+        return False, f"更新失败: {e}"
+    finally:
+        conn.close()
+
+
+def delete_purchase_payment(payment_id: int) -> Tuple[bool, str]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM purchase_payments WHERE id=?", (payment_id,))
+        conn.commit()
+        return True, "删除成功"
+    finally:
+        conn.close()
+
+
+def get_purchase_payments(
+    start_date: str = "",
+    end_date: str = "",
+    keyword: str = "",
+    supplier_id: Optional[int] = None,
+    status: str = "",
+) -> List[sqlite3.Row]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT pp.*, sp.purchase_date, sp.purchase_quantity, sp.unit_price, sp.total_amount,
+               m.material_code, m.material_name,
+               s.supplier_code, s.supplier_name, s.payment_days
+        FROM purchase_payments pp
+        LEFT JOIN stock_purchases sp ON pp.purchase_id = sp.id
+        LEFT JOIN materials m ON sp.material_id = m.id
+        LEFT JOIN suppliers s ON pp.supplier_id = s.id
+        WHERE 1=1
+    """
+    params = []
+    if start_date:
+        query += " AND sp.purchase_date >= ?"
+        params.append(start_date)
+    if end_date:
+        query += " AND sp.purchase_date <= ?"
+        params.append(end_date)
+    if keyword:
+        query += " AND (s.supplier_name LIKE ? OR s.supplier_code LIKE ? OR m.material_name LIKE ? OR m.material_code LIKE ?)"
+        like = f"%{keyword}%"
+        params.extend([like, like, like, like])
+    if supplier_id:
+        query += " AND pp.supplier_id = ?"
+        params.append(supplier_id)
+    if status and status != "全部":
+        query += " AND pp.payment_status = ?"
+        params.append(status)
+    query += " ORDER BY sp.purchase_date DESC, pp.id DESC"
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_purchase_payment_by_id(payment_id: int) -> Optional[sqlite3.Row]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT pp.*, sp.purchase_date, sp.total_amount, s.supplier_name
+        FROM purchase_payments pp
+        LEFT JOIN stock_purchases sp ON pp.purchase_id = sp.id
+        LEFT JOIN suppliers s ON pp.supplier_id = s.id
+        WHERE pp.id=?
+    """, (payment_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+
+def get_unpaid_purchases(supplier_id: Optional[int] = None) -> List[sqlite3.Row]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT sp.*, m.material_code, m.material_name, s.supplier_code, s.supplier_name, s.payment_days
+        FROM stock_purchases sp
+        LEFT JOIN materials m ON sp.material_id = m.id
+        LEFT JOIN suppliers s ON sp.supplier_id = s.id
+        WHERE sp.id NOT IN (SELECT purchase_id FROM purchase_payments)
+    """
+    params = []
+    if supplier_id:
+        query += " AND sp.supplier_id = ?"
+        params.append(supplier_id)
+    query += " ORDER BY sp.purchase_date DESC"
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_supplier_debt_summary(start_date: str = "", end_date: str = "") -> List[Dict]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT
+            s.id as supplier_id,
+            s.supplier_code,
+            s.supplier_name,
+            s.contact_person,
+            s.contact_phone,
+            s.credit_limit,
+            COUNT(pp.id) as payment_count,
+            SUM(pp.payable_amount) as total_payable,
+            SUM(pp.paid_amount) as total_paid,
+            SUM(CASE WHEN pp.payment_status IN ('未付款', '部分付款', '逾期') THEN 1 ELSE 0 END) as unpaid_count
+        FROM suppliers s
+        LEFT JOIN purchase_payments pp ON s.id = pp.supplier_id
+        LEFT JOIN stock_purchases sp ON pp.purchase_id = sp.id
+        WHERE 1=1
+    """
+    params = []
+    if start_date:
+        query += " AND sp.purchase_date >= ?"
+        params.append(start_date)
+    if end_date:
+        query += " AND sp.purchase_date <= ?"
+        params.append(end_date)
+    query += " GROUP BY s.id ORDER BY (SUM(pp.payable_amount) - SUM(pp.paid_amount)) DESC"
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+
+    result = []
+    for row in rows:
+        total_payable = row["total_payable"] or 0
+        total_paid = row["total_paid"] or 0
+        unpaid = round(total_payable - total_paid, 2)
+        result.append({
+            "supplier_id": row["supplier_id"],
+            "supplier_code": row["supplier_code"],
+            "supplier_name": row["supplier_name"],
+            "contact_person": row["contact_person"] or "",
+            "contact_phone": row["contact_phone"] or "",
+            "credit_limit": row["credit_limit"] or 0,
+            "payment_count": row["payment_count"] or 0,
+            "total_payable": round(total_payable, 2),
+            "total_paid": round(total_paid, 2),
+            "unpaid_amount": unpaid,
+            "unpaid_count": row["unpaid_count"] or 0,
+            "credit_usage": round((unpaid / (row["credit_limit"] or 1) * 100), 2) if row["credit_limit"] else 0,
+        })
+    return result
+
+
+def get_material_purchase_rank(start_date: str = "", end_date: str = "", top_n: int = 20) -> List[Dict]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT
+            m.id as material_id,
+            m.material_code,
+            m.material_name,
+            m.material_spec,
+            SUM(sp.purchase_quantity) as total_qty,
+            SUM(sp.total_amount) as total_amount,
+            COUNT(sp.id) as purchase_count,
+            AVG(sp.unit_price) as avg_price
+        FROM materials m
+        LEFT JOIN stock_purchases sp ON m.id = sp.material_id
+        WHERE 1=1
+    """
+    params = []
+    if start_date:
+        query += " AND sp.purchase_date >= ?"
+        params.append(start_date)
+    if end_date:
+        query += " AND sp.purchase_date <= ?"
+        params.append(end_date)
+    query += " GROUP BY m.id HAVING total_amount > 0 ORDER BY total_amount DESC"
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+
+    result = []
+    for row in rows:
+        result.append({
+            "material_id": row["material_id"],
+            "material_code": row["material_code"],
+            "material_name": row["material_name"],
+            "material_spec": row["material_spec"] or "",
+            "total_qty": row["total_qty"] or 0,
+            "total_amount": round(row["total_amount"] or 0, 2),
+            "purchase_count": row["purchase_count"] or 0,
+            "avg_price": round(row["avg_price"] or 0, 2),
+        })
+    return result[:top_n]
+
+
+def get_overdue_payments() -> List[Dict]:
+    today = datetime.now().strftime("%Y-%m-%d")
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT
+            pp.id as payment_id,
+            s.id as supplier_id,
+            s.supplier_code,
+            s.supplier_name,
+            s.contact_person,
+            s.contact_phone,
+            s.payment_days,
+            sp.purchase_date,
+            sp.id as purchase_id,
+            m.material_code,
+            m.material_name,
+            pp.payable_amount,
+            pp.paid_amount,
+            pp.payment_status,
+            pp.remark
+        FROM purchase_payments pp
+        LEFT JOIN stock_purchases sp ON pp.purchase_id = sp.id
+        LEFT JOIN suppliers s ON pp.supplier_id = s.id
+        LEFT JOIN materials m ON sp.material_id = m.id
+        WHERE pp.payment_status IN ('未付款', '部分付款', '逾期')
+        ORDER BY sp.purchase_date ASC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+
+    result = []
+    for row in rows:
+        try:
+            purchase_dt = datetime.strptime(row["purchase_date"], "%Y-%m-%d")
+            payment_days = row["payment_days"] or 30
+            due_date = (purchase_dt + timedelta(days=payment_days)).strftime("%Y-%m-%d")
+            overdue_days = (datetime.now() - (purchase_dt + timedelta(days=payment_days))).days
+        except Exception:
+            due_date = ""
+            overdue_days = 0
+
+        unpaid = round((row["payable_amount"] or 0) - (row["paid_amount"] or 0), 2)
+        is_overdue = overdue_days > 0 and unpaid > 0
+
+        result.append({
+            "payment_id": row["payment_id"],
+            "supplier_id": row["supplier_id"],
+            "supplier_code": row["supplier_code"],
+            "supplier_name": row["supplier_name"],
+            "contact_person": row["contact_person"] or "",
+            "contact_phone": row["contact_phone"] or "",
+            "purchase_date": row["purchase_date"],
+            "due_date": due_date,
+            "overdue_days": max(overdue_days, 0),
+            "is_overdue": is_overdue,
+            "purchase_id": row["purchase_id"],
+            "material_code": row["material_code"],
+            "material_name": row["material_name"],
+            "payable_amount": round(row["payable_amount"] or 0, 2),
+            "paid_amount": round(row["paid_amount"] or 0, 2),
+            "unpaid_amount": unpaid,
+            "payment_status": row["payment_status"],
+            "remark": row["remark"] or "",
+        })
+
+    result.sort(key=lambda x: x["overdue_days"], reverse=True)
+    return [r for r in result if r["is_overdue"] or True]
+
+
+def get_monthly_purchase_trend(months: int = 12) -> List[Dict]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT
+            strftime('%Y-%m', purchase_date) as month,
+            SUM(total_amount) as total_amount,
+            COUNT(*) as purchase_count,
+            SUM(purchase_quantity) as total_qty
+        FROM stock_purchases
+        WHERE purchase_date >= date('now', 'start of month', ?)
+        GROUP BY strftime('%Y-%m', purchase_date)
+        ORDER BY month ASC
+    """, (f"-{months - 1} months",))
+    rows = cursor.fetchall()
+    conn.close()
+
+    result = []
+    data_map = {}
+    for row in rows:
+        data_map[row["month"]] = {
+            "month": row["month"],
+            "total_amount": round(row["total_amount"] or 0, 2),
+            "purchase_count": row["purchase_count"] or 0,
+            "total_qty": row["total_qty"] or 0,
+        }
+
+    from datetime import date as _date
+    today = _date.today()
+    for i in range(months - 1, -1, -1):
+        m = today.replace(day=1) - timedelta(days=i * 30)
+        month_key = m.strftime("%Y-%m")
+        if month_key in data_map:
+            result.append(data_map[month_key])
+        else:
+            result.append({
+                "month": month_key,
+                "total_amount": 0.0,
+                "purchase_count": 0,
+                "total_qty": 0,
+            })
+    return result
