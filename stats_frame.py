@@ -5,6 +5,27 @@ from datetime import date, timedelta
 import pandas as pd
 import matplotlib
 matplotlib.use("TkAgg")
+import matplotlib.pyplot as plt
+from matplotlib import font_manager
+import platform
+import os
+
+system = platform.system()
+if system == "Windows":
+    font_candidates = ["Microsoft YaHei", "SimHei", "SimSun", "KaiTi"]
+elif system == "Darwin":
+    font_candidates = ["PingFang SC", "Heiti SC", "STHeiti", "Arial Unicode MS"]
+else:
+    font_candidates = ["Noto Sans CJK SC", "WenQuanYi Micro Hei", "Source Han Sans SC"]
+
+available_fonts = {f.name for f in font_manager.fontManager.ttflist}
+for fname in font_candidates:
+    if fname in available_fonts:
+        plt.rcParams["font.sans-serif"] = [fname]
+        break
+
+plt.rcParams["axes.unicode_minus"] = False
+
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import database as db

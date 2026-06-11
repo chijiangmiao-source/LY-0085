@@ -26,10 +26,15 @@ class RecordDialog(ctk.CTkToplevel):
         rows = db.get_materials()
         values = []
         for r in rows:
-            if r["material_status"] == "正常":
-                label = f"{r['material_code']} - {r['material_name']} (库存:{r['current_stock']})"
+            if self.record_id:
+                label = f"{r['material_code']} - {r['material_name']} [{r['material_status']}] (库存:{r['current_stock']})"
                 self._material_map[label] = r["id"]
                 values.append(label)
+            else:
+                if r["material_status"] == "正常":
+                    label = f"{r['material_code']} - {r['material_name']} (库存:{r['current_stock']})"
+                    self._material_map[label] = r["id"]
+                    values.append(label)
         self.combo_material.configure(values=values)
 
     def _build_ui(self):
@@ -113,6 +118,15 @@ class RecordDialog(ctk.CTkToplevel):
             if mid == record["material_id"]:
                 mat_label = label
                 break
+        if not mat_label:
+            mat = db.get_material_by_id(record["material_id"])
+            if mat:
+                mat_label = f"{mat['material_code']} - {mat['material_name']} [{mat['material_status']}] (库存:{mat['current_stock']})"
+                self._material_map[mat_label] = mat["id"]
+                current_values = list(self.combo_material.cget("values"))
+                if mat_label not in current_values:
+                    current_values.append(mat_label)
+                    self.combo_material.configure(values=current_values)
         if mat_label:
             self.combo_material.set(mat_label)
 
@@ -233,9 +247,13 @@ class RecordFrame(ctk.CTkFrame):
         self.tree.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
 
+        from datetime import date
+        self.date_start.set_date(date(2000, 1, 1))
+        self.date_end.set_date(date.today())
+
     def _reset(self):
-        from datetime import date, timedelta
-        self.date_start.set_date(date.today() - timedelta(days=30))
+        from datetime import date
+        self.date_start.set_date(date(2000, 1, 1))
         self.date_end.set_date(date.today())
         self.entry_search.delete(0, "end")
         self.refresh()
