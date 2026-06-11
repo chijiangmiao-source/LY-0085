@@ -93,14 +93,43 @@ class RestockDialog(ctk.CTkToplevel):
             qty = int(self.entry_qty.get().strip() or "0")
             price = float(self.entry_price.get().strip() or "0")
             total = round(qty * price, 2)
+            current_total = self.entry_total.get().strip()
+            try:
+                current_val = float(current_total) if current_total else 0.0
+                if abs(current_val - total) > 0.01:
+                    self.lbl_auto.configure(
+                        text=f"⚠ 总金额不匹配，计算值为: ¥{total:.2f}",
+                        text_color="#e74c3c"
+                    )
+                else:
+                    self.lbl_auto.configure(
+                        text=f"✓ 总金额匹配: ¥{total:.2f}",
+                        text_color="#27ae60"
+                    )
+            except ValueError:
+                pass
             self.entry_total.delete(0, "end")
             self.entry_total.insert(0, f"{total:.2f}")
         except ValueError:
-            pass
+            self.lbl_auto.configure(
+                text="💡 输入数量和单价后自动计算总金额",
+                text_color="gray"
+            )
 
     def _calc_total(self):
-        self._auto_calc()
-        messagebox.showinfo("提示", f"总金额已自动计算为: {self.entry_total.get()} 元", parent=self)
+        try:
+            qty = int(self.entry_qty.get().strip() or "0")
+            price = float(self.entry_price.get().strip() or "0")
+            total = round(qty * price, 2)
+            self.entry_total.delete(0, "end")
+            self.entry_total.insert(0, f"{total:.2f}")
+            self.lbl_auto.configure(
+                text=f"✓ 总金额已自动计算为: ¥{total:.2f}",
+                text_color="#27ae60"
+            )
+            messagebox.showinfo("提示", f"总金额已自动计算为: ¥{total:.2f} 元", parent=self)
+        except ValueError:
+            messagebox.showwarning("警告", "请先输入有效的采购数量和单价", parent=self)
 
     def _load_data(self):
         records = db.get_stock_purchases()
@@ -166,6 +195,30 @@ class RestockDialog(ctk.CTkToplevel):
         except ValueError:
             messagebox.showerror("错误", "总金额必须是数字", parent=self)
             return
+
+        calc_total = round(purchase_qty * unit_price, 2)
+        if abs(total_amount - calc_total) > 0.01:
+            result = messagebox.askyesnocancel(
+                "金额校验",
+                f"总金额与计算结果不匹配！\n\n"
+                f"采购数量: {purchase_qty}\n"
+                f"单　　价: ¥{unit_price:.2f}\n"
+                f"计算总价: ¥{calc_total:.2f}\n"
+                f"输入总价: ¥{total_amount:.2f}\n\n"
+                f"是否使用自动计算的金额 ¥{calc_total:.2f} 保存？\n"
+                f"（是=使用计算值 / 否=继续使用输入值 / 取消=返回修改）",
+                parent=self
+            )
+            if result is None:
+                return
+            elif result:
+                total_amount = calc_total
+                self.entry_total.delete(0, "end")
+                self.entry_total.insert(0, f"{total_amount:.2f}")
+                self.lbl_auto.configure(
+                    text=f"✓ 已使用计算金额: ¥{total_amount:.2f}",
+                    text_color="#27ae60"
+                )
 
         purchase_date = self.date_entry.get_date().strftime("%Y-%m-%d")
         remark = self.text_remark.get("1.0", "end").strip()

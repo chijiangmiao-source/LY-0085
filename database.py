@@ -557,6 +557,9 @@ def validate_stock_purchase(data: Dict) -> Tuple[bool, str]:
     total = data.get("total_amount", 0)
     if total <= 0:
         return False, "总金额必须大于 0"
+    calc_total = round(qty * price, 2)
+    if abs(total - calc_total) > 0.01:
+        return False, f"总金额不匹配：数量({qty}) × 单价({price}) = {calc_total}，当前输入为 {total}"
     return True, ""
 
 
@@ -601,17 +604,30 @@ def update_stock_purchase(purchase_id: int, data: Dict) -> Tuple[bool, str]:
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT purchase_quantity, material_id FROM stock_purchases WHERE id=?", (purchase_id,))
-        old_row = cursor.fetchone()
-        if not old_row:
+        cursor.execute("SELECT sp.purchase_quantity, sp.material_id, "
+                       "m1.current_stock as old_stock, m1.material_name as old_name, "
+                       "m2.current_stock as new_stock, m2.material_name as new_name "
+                       "FROM stock_purchases sp "
+                       "LEFT JOIN materials m1 ON sp.material_id = m1.id "
+                       "LEFT JOIN materials m2 ON ? = m2.id "
+                       "WHERE sp.id=?",
+                       (data["material_id"], purchase_id))
+        row = cursor.fetchone()
+        if not row:
             return False, "记录不存在"
 
-        old_qty = old_row["purchase_quantity"]
-        old_material_id = old_row["material_id"]
+        old_qty = row["purchase_quantity"]
+        old_material_id = row["material_id"]
+        old_stock = row["old_stock"] or 0
+        old_name = row["old_name"] or "未知材料"
         new_qty = data["purchase_quantity"]
         new_material_id = data["material_id"]
 
         if old_material_id != new_material_id:
+            if old_stock < old_qty:
+                return False, (f"库存不足，无法回退旧材料：材料[{old_name}]当前库存为 {old_stock}，"
+                               f"需要回退 {old_qty}，回退后库存将为负数。\n"
+                               f"请先调整库存或删除相关施工记录后再试。")
             cursor.execute(
                 "UPDATE materials SET current_stock = current_stock - ? WHERE id=?",
                 (old_qty, old_material_id),
@@ -621,6 +637,12 @@ def update_stock_purchase(purchase_id: int, data: Dict) -> Tuple[bool, str]:
                 (new_qty, new_material_id),
             )
         else:
+            if new_qty < old_qty:
+                rollback_qty = old_qty - new_qty
+                if old_stock < rollback_qty:
+                    return False, (f"库存不足，无法回退：材料[{old_name}]当前库存为 {old_stock}，"
+                                   f"需要回退 {rollback_qty}（原 {old_qty} → 新 {new_qty}），回退后库存将为负数。\n"
+                                   f"请先调整库存或删除相关施工记录后再试。")
             diff = new_qty - old_qty
             if diff != 0:
                 cursor.execute(
@@ -653,13 +675,21 @@ def delete_stock_purchase(purchase_id: int) -> Tuple[bool, str]:
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT purchase_quantity, material_id FROM stock_purchases WHERE id=?", (purchase_id,))
+        cursor.execute("SELECT sp.purchase_quantity, sp.material_id, m.current_stock, m.material_name "
+                       "FROM stock_purchases sp LEFT JOIN materials m ON sp.material_id = m.id "
+                       "WHERE sp.id=?", (purchase_id,))
         row = cursor.fetchone()
         if not row:
             return False, "记录不存在"
+        old_qty = row["purchase_quantity"]
+        current_stock = row["current_stock"]
+        if current_stock < old_qty:
+            return False, (f"库存不足，无法回退：材料[{row['material_name']}]当前库存为 {current_stock}，"
+                           f"需要回退 {old_qty}，回退后库存将为负数。\n"
+                           f"请先调整库存或删除相关施工记录后再试。")
         cursor.execute(
             "UPDATE materials SET current_stock = current_stock - ? WHERE id=?",
-            (row["purchase_quantity"], row["material_id"]),
+            (old_qty, row["material_id"]),
         )
         cursor.execute("DELETE FROM stock_purchases WHERE id=?", (purchase_id,))
         conn.commit()
