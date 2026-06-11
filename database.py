@@ -48,6 +48,21 @@ def init_db():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stock_purchases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            purchase_date TEXT NOT NULL,
+            material_id INTEGER NOT NULL,
+            supplier TEXT NOT NULL,
+            purchase_quantity INTEGER NOT NULL,
+            unit_price REAL NOT NULL,
+            total_amount REAL NOT NULL,
+            remark TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (material_id) REFERENCES materials(id)
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
@@ -524,3 +539,368 @@ def get_low_stock_materials() -> List[sqlite3.Row]:
     rows = cursor.fetchall()
     conn.close()
     return rows
+
+
+def validate_stock_purchase(data: Dict) -> Tuple[bool, str]:
+    if not data.get("purchase_date"):
+        return False, "采购日期不能为空"
+    if not data.get("material_id"):
+        return False, "请选择材料"
+    if not data.get("supplier"):
+        return False, "供应商不能为空"
+    qty = data.get("purchase_quantity", 0)
+    if qty <= 0:
+        return False, "采购数量必须大于 0"
+    price = data.get("unit_price", 0)
+    if price <= 0:
+        return False, "单价必须大于 0"
+    total = data.get("total_amount", 0)
+    if total <= 0:
+        return False, "总金额必须大于 0"
+    return True, ""
+
+
+def add_stock_purchase(data: Dict) -> Tuple[bool, str]:
+    valid, msg = validate_stock_purchase(data)
+    if not valid:
+        return False, msg
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO stock_purchases (purchase_date, material_id, supplier, purchase_quantity, unit_price, total_amount, remark, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                data["purchase_date"],
+                data["material_id"],
+                data["supplier"],
+                data["purchase_quantity"],
+                data["unit_price"],
+                data["total_amount"],
+                data.get("remark", ""),
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+        )
+        cursor.execute(
+            "UPDATE materials SET current_stock = current_stock + ? WHERE id=?",
+            (data["purchase_quantity"], data["material_id"]),
+        )
+        conn.commit()
+        return True, "采购登记成功，库存已更新"
+    except Exception as e:
+        return False, f"登记失败: {e}"
+    finally:
+        conn.close()
+
+
+def update_stock_purchase(purchase_id: int, data: Dict) -> Tuple[bool, str]:
+    valid, msg = validate_stock_purchase(data)
+    if not valid:
+        return False, msg
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT purchase_quantity, material_id FROM stock_purchases WHERE id=?", (purchase_id,))
+        old_row = cursor.fetchone()
+        if not old_row:
+            return False, "记录不存在"
+
+        old_qty = old_row["purchase_quantity"]
+        old_material_id = old_row["material_id"]
+        new_qty = data["purchase_quantity"]
+        new_material_id = data["material_id"]
+
+        if old_material_id != new_material_id:
+            cursor.execute(
+                "UPDATE materials SET current_stock = current_stock - ? WHERE id=?",
+                (old_qty, old_material_id),
+            )
+            cursor.execute(
+                "UPDATE materials SET current_stock = current_stock + ? WHERE id=?",
+                (new_qty, new_material_id),
+            )
+        else:
+            diff = new_qty - old_qty
+            if diff != 0:
+                cursor.execute(
+                    "UPDATE materials SET current_stock = current_stock + ? WHERE id=?",
+                    (diff, new_material_id),
+                )
+
+        cursor.execute(
+            "UPDATE stock_purchases SET purchase_date=?, material_id=?, supplier=?, purchase_quantity=?, unit_price=?, total_amount=?, remark=? WHERE id=?",
+            (
+                data["purchase_date"],
+                data["material_id"],
+                data["supplier"],
+                data["purchase_quantity"],
+                data["unit_price"],
+                data["total_amount"],
+                data.get("remark", ""),
+                purchase_id,
+            ),
+        )
+        conn.commit()
+        return True, "更新成功，库存已同步"
+    except Exception as e:
+        return False, f"更新失败: {e}"
+    finally:
+        conn.close()
+
+
+def delete_stock_purchase(purchase_id: int) -> Tuple[bool, str]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT purchase_quantity, material_id FROM stock_purchases WHERE id=?", (purchase_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False, "记录不存在"
+        cursor.execute(
+            "UPDATE materials SET current_stock = current_stock - ? WHERE id=?",
+            (row["purchase_quantity"], row["material_id"]),
+        )
+        cursor.execute("DELETE FROM stock_purchases WHERE id=?", (purchase_id,))
+        conn.commit()
+        return True, "删除成功，库存已回退"
+    finally:
+        conn.close()
+
+
+def get_stock_purchases(
+    start_date: str = "",
+    end_date: str = "",
+    keyword: str = "",
+    material_id: Optional[int] = None,
+) -> List[sqlite3.Row]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT sp.*, m.material_code, m.material_name
+        FROM stock_purchases sp
+        LEFT JOIN materials m ON sp.material_id = m.id
+        WHERE 1=1
+    """
+    params = []
+    if start_date:
+        query += " AND sp.purchase_date >= ?"
+        params.append(start_date)
+    if end_date:
+        query += " AND sp.purchase_date <= ?"
+        params.append(end_date)
+    if keyword:
+        query += " AND (sp.supplier LIKE ? OR m.material_name LIKE ? OR m.material_code LIKE ?)"
+        like = f"%{keyword}%"
+        params.extend([like, like, like])
+    if material_id:
+        query += " AND sp.material_id = ?"
+        params.append(material_id)
+    query += " ORDER BY sp.purchase_date DESC, sp.id DESC"
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_avg_unit_price(material_id: int) -> float:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT AVG(unit_price) as avg_price
+        FROM stock_purchases
+        WHERE material_id = ?
+    """, (material_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return float(row["avg_price"]) if row and row["avg_price"] else 0.0
+
+
+def get_unit_order_material_cost(start_date: str = "", end_date: str = "") -> List[Dict]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT 
+            cr.order_no,
+            cr.construction_date,
+            SUM(cr.used_quantity) as total_qty,
+            SUM(cr.rework_count) as total_reworks,
+            GROUP_CONCAT(DISTINCT m.material_name, ', ') as materials_used
+        FROM construction_records cr
+        LEFT JOIN materials m ON cr.material_id = m.id
+        WHERE 1=1
+    """
+    params = []
+    if start_date:
+        query += " AND cr.construction_date >= ?"
+        params.append(start_date)
+    if end_date:
+        query += " AND cr.construction_date <= ?"
+        params.append(end_date)
+    query += " GROUP BY cr.order_no, cr.construction_date ORDER BY cr.construction_date DESC"
+    cursor.execute(query, params)
+    order_rows = cursor.fetchall()
+
+    result = []
+    for row in order_rows:
+        order_no = row["order_no"]
+        cursor.execute("""
+            SELECT cr.material_id, cr.used_quantity, cr.rework_count
+            FROM construction_records cr
+            WHERE cr.order_no = ? AND cr.construction_date = ?
+        """, (order_no, row["construction_date"]))
+        items = cursor.fetchall()
+
+        total_cost = 0.0
+        total_loss_cost = 0.0
+        for item in items:
+            avg_price = get_avg_unit_price(item["material_id"])
+            used_qty = item["used_quantity"]
+            rework_count = item["rework_count"]
+            total_cost += used_qty * avg_price
+            if rework_count > 0:
+                loss_qty = used_qty * (rework_count / (rework_count + 1))
+                total_loss_cost += loss_qty * avg_price
+
+        result.append({
+            "order_no": order_no,
+            "construction_date": row["construction_date"],
+            "materials_used": row["materials_used"] or "",
+            "total_qty": row["total_qty"] or 0,
+            "total_reworks": row["total_reworks"] or 0,
+            "total_cost": round(total_cost, 2),
+            "loss_cost": round(total_loss_cost, 2),
+            "unit_cost": round(total_cost / max(row["total_qty"], 1), 2),
+        })
+    conn.close()
+    return result
+
+
+def get_30day_material_loss_cost() -> Dict:
+    thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    today = datetime.now().strftime("%Y-%m-%d")
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT 
+            cr.material_id,
+            m.material_code,
+            m.material_name,
+            SUM(cr.used_quantity) as total_used,
+            SUM(cr.rework_count) as total_reworks,
+            COUNT(*) as record_count
+        FROM construction_records cr
+        LEFT JOIN materials m ON cr.material_id = m.id
+        WHERE cr.construction_date >= ? AND cr.construction_date <= ?
+        GROUP BY cr.material_id
+        HAVING total_used > 0
+        ORDER BY total_used DESC
+    """, (thirty_days_ago, today))
+    rows = cursor.fetchall()
+
+    total_purchase_cost = 0.0
+    total_loss_cost = 0.0
+    material_details = []
+
+    for row in rows:
+        avg_price = get_avg_unit_price(row["material_id"])
+        used_cost = (row["total_used"] or 0) * avg_price
+        reworks = row["total_reworks"] or 0
+        records = row["record_count"] or 0
+
+        if records > 0 and reworks > 0:
+            loss_ratio = reworks / (records + reworks)
+            loss_cost = used_cost * loss_ratio
+        else:
+            loss_cost = 0.0
+
+        total_purchase_cost += used_cost
+        total_loss_cost += loss_cost
+
+        material_details.append({
+            "material_id": row["material_id"],
+            "material_code": row["material_code"],
+            "material_name": row["material_name"],
+            "total_used": row["total_used"] or 0,
+            "total_reworks": reworks,
+            "avg_price": round(avg_price, 2),
+            "used_cost": round(used_cost, 2),
+            "loss_cost": round(loss_cost, 2),
+            "loss_ratio": round((loss_cost / used_cost * 100) if used_cost > 0 else 0, 2),
+        })
+
+    conn.close()
+    return {
+        "period_start": thirty_days_ago,
+        "period_end": today,
+        "total_purchase_cost": round(total_purchase_cost, 2),
+        "total_loss_cost": round(total_loss_cost, 2),
+        "loss_rate": round((total_loss_cost / total_purchase_cost * 100) if total_purchase_cost > 0 else 0, 2),
+        "materials": material_details,
+    }
+
+
+def get_high_loss_high_cost_materials(start_date: str = "", end_date: str = "", top_n: int = 10) -> List[Dict]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT 
+            cr.material_id,
+            m.material_code,
+            m.material_name,
+            m.material_spec,
+            SUM(cr.used_quantity) as total_used,
+            SUM(cr.rework_count) as total_reworks,
+            COUNT(*) as record_count,
+            SUM(CASE WHEN cr.rework_count >= 2 THEN 1 ELSE 0 END) as abnormal_count
+        FROM construction_records cr
+        LEFT JOIN materials m ON cr.material_id = m.id
+        WHERE 1=1
+    """
+    params = []
+    if start_date:
+        query += " AND cr.construction_date >= ?"
+        params.append(start_date)
+    if end_date:
+        query += " AND cr.construction_date <= ?"
+        params.append(end_date)
+    query += " GROUP BY cr.material_id HAVING total_used > 0"
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+
+    result = []
+    for row in rows:
+        avg_price = get_avg_unit_price(row["material_id"])
+        total_used = row["total_used"] or 0
+        total_reworks = row["total_reworks"] or 0
+        records = row["record_count"] or 0
+        abnormal_count = row["abnormal_count"] or 0
+
+        total_cost = total_used * avg_price
+
+        if records > 0 and total_reworks > 0:
+            loss_ratio = total_reworks / (records + total_reworks)
+            loss_cost = total_cost * loss_ratio
+        else:
+            loss_ratio = 0
+            loss_cost = 0
+
+        result.append({
+            "material_id": row["material_id"],
+            "material_code": row["material_code"],
+            "material_name": row["material_name"],
+            "material_spec": row["material_spec"] or "",
+            "total_used": total_used,
+            "total_reworks": total_reworks,
+            "abnormal_count": abnormal_count,
+            "avg_price": round(avg_price, 2),
+            "total_cost": round(total_cost, 2),
+            "loss_cost": round(loss_cost, 2),
+            "loss_ratio": round(loss_ratio * 100, 2),
+            "score": round(loss_cost + total_cost * 0.3, 2),
+        })
+
+    result.sort(key=lambda x: x["score"], reverse=True)
+    conn.close()
+    return result[:top_n]
