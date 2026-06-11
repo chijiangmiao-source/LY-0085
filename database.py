@@ -585,6 +585,8 @@ def validate_stock_purchase(data: Dict) -> Tuple[bool, str]:
         return False, "请选择材料"
     if not data.get("supplier"):
         return False, "供应商不能为空"
+    if not data.get("supplier_id"):
+        return False, "请从供应商档案中选择供应商"
     qty = data.get("purchase_quantity", 0)
     if qty <= 0:
         return False, "采购数量必须大于 0"
@@ -609,11 +611,12 @@ def add_stock_purchase(data: Dict) -> Tuple[bool, str]:
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "INSERT INTO stock_purchases (purchase_date, material_id, supplier, purchase_quantity, unit_price, total_amount, remark, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO stock_purchases (purchase_date, material_id, supplier, supplier_id, purchase_quantity, unit_price, total_amount, remark, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 data["purchase_date"],
                 data["material_id"],
                 data["supplier"],
+                data.get("supplier_id"),
                 data["purchase_quantity"],
                 data["unit_price"],
                 data["total_amount"],
@@ -688,11 +691,12 @@ def update_stock_purchase(purchase_id: int, data: Dict) -> Tuple[bool, str]:
                 )
 
         cursor.execute(
-            "UPDATE stock_purchases SET purchase_date=?, material_id=?, supplier=?, purchase_quantity=?, unit_price=?, total_amount=?, remark=? WHERE id=?",
+            "UPDATE stock_purchases SET purchase_date=?, material_id=?, supplier=?, supplier_id=?, purchase_quantity=?, unit_price=?, total_amount=?, remark=? WHERE id=?",
             (
                 data["purchase_date"],
                 data["material_id"],
                 data["supplier"],
+                data.get("supplier_id"),
                 data["purchase_quantity"],
                 data["unit_price"],
                 data["total_amount"],
@@ -1473,7 +1477,7 @@ def get_overdue_payments() -> List[Dict]:
         })
 
     result.sort(key=lambda x: x["overdue_days"], reverse=True)
-    return [r for r in result if r["is_overdue"] or True]
+    return [r for r in result if r["is_overdue"]]
 
 
 def get_monthly_purchase_trend(months: int = 12) -> List[Dict]:

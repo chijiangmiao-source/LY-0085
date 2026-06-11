@@ -17,8 +17,10 @@ class RestockDialog(ctk.CTkToplevel):
         self.grab_set()
 
         self._material_map = {}
+        self._supplier_map = {}
         self._build_ui()
         self._load_materials()
+        self._load_suppliers()
         if restock_id:
             self._load_data()
 
@@ -31,6 +33,16 @@ class RestockDialog(ctk.CTkToplevel):
                 self._material_map[label] = r["id"]
                 values.append(label)
         self.combo_material.configure(values=values)
+
+    def _load_suppliers(self):
+        rows = db.get_suppliers()
+        values = []
+        for r in rows:
+            if r["supplier_status"] == "正常":
+                label = f"{r['supplier_code']} - {r['supplier_name']}"
+                self._supplier_map[label] = r["id"]
+                values.append(label)
+        self.combo_supplier.configure(values=values)
 
     def _build_ui(self):
         pad = {"padx": 15, "pady": 8}
@@ -54,8 +66,8 @@ class RestockDialog(ctk.CTkToplevel):
         self.combo_material.grid(row=1, column=1, **pad)
 
         ctk.CTkLabel(frm, text="供应商 *", anchor="w").grid(row=2, column=0, sticky="w", **pad)
-        self.entry_supplier = ctk.CTkEntry(frm, width=280)
-        self.entry_supplier.grid(row=2, column=1, **pad)
+        self.combo_supplier = ctk.CTkComboBox(frm, values=[], width=280)
+        self.combo_supplier.grid(row=2, column=1, **pad)
 
         ctk.CTkLabel(frm, text="采购数量 *", anchor="w").grid(row=3, column=0, sticky="w", **pad)
         self.entry_qty = ctk.CTkEntry(frm, width=280)
@@ -146,7 +158,26 @@ class RestockDialog(ctk.CTkToplevel):
             self.date_entry.set_date(dt)
         except Exception:
             pass
-        self.entry_supplier.insert(0, record["supplier"])
+
+        supplier_label = None
+        if record.get("supplier_id"):
+            for label, sid in self._supplier_map.items():
+                if sid == record["supplier_id"]:
+                    supplier_label = label
+                    break
+        if not supplier_label and record["supplier"]:
+            all_suppliers = db.get_suppliers()
+            for s in all_suppliers:
+                if s["supplier_name"] == record["supplier"] or record["supplier"].endswith(s["supplier_name"]):
+                    supplier_label = f"{s['supplier_code']} - {s['supplier_name']}"
+                    self._supplier_map[supplier_label] = s["id"]
+                    current_values = list(self.combo_supplier.cget("values"))
+                    if supplier_label not in current_values:
+                        current_values.append(supplier_label)
+                        self.combo_supplier.configure(values=current_values)
+                    break
+        if supplier_label:
+            self.combo_supplier.set(supplier_label)
         self.entry_qty.delete(0, "end")
         self.entry_qty.insert(0, str(record["purchase_quantity"]))
         self.entry_price.delete(0, "end")
@@ -179,6 +210,13 @@ class RestockDialog(ctk.CTkToplevel):
             messagebox.showerror("错误", "请选择材料", parent=self)
             return
         material_id = self._material_map[mat_label]
+
+        sup_label = self.combo_supplier.get().strip()
+        if sup_label not in self._supplier_map:
+            messagebox.showerror("错误", "请选择供应商（从供应商档案中选择）", parent=self)
+            return
+        supplier_id = self._supplier_map[sup_label]
+        sup_name = sup_label.split(" - ", 1)[1] if " - " in sup_label else sup_label
 
         try:
             purchase_qty = int(self.entry_qty.get().strip() or "0")
@@ -226,7 +264,8 @@ class RestockDialog(ctk.CTkToplevel):
         data = {
             "purchase_date": purchase_date,
             "material_id": material_id,
-            "supplier": self.entry_supplier.get().strip(),
+            "supplier": sup_name,
+            "supplier_id": supplier_id,
             "purchase_quantity": purchase_qty,
             "unit_price": unit_price,
             "total_amount": total_amount,

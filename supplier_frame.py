@@ -30,6 +30,7 @@ plt.rcParams["axes.unicode_minus"] = False
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import database as db
+from restock_frame import RestockFrame
 
 
 class SupplierDialog(ctk.CTkToplevel):
@@ -422,6 +423,10 @@ class SupplierFrame(ctk.CTkFrame):
                                            fg_color="#95a5a6", command=lambda: self._switch_tab("warn"))
         self.btn_tab_warn.pack(side="left", padx=3)
 
+        self.btn_tab_restock = ctk.CTkButton(tab_bar, text="📦 采购补货", width=130, height=36,
+                                              fg_color="#95a5a6", command=lambda: self._switch_tab("restock"))
+        self.btn_tab_restock.pack(side="left", padx=3)
+
         self.supplier_frame = ctk.CTkFrame(self, fg_color="transparent")
         self._build_supplier_ui()
 
@@ -433,6 +438,8 @@ class SupplierFrame(ctk.CTkFrame):
 
         self.warn_frame = ctk.CTkFrame(self, fg_color="transparent")
         self._build_warn_ui()
+
+        self.restock_frame = RestockFrame(self)
 
         self._switch_tab("supplier")
 
@@ -746,11 +753,13 @@ class SupplierFrame(ctk.CTkFrame):
         self.payment_frame.pack_forget()
         self.stats_frame.pack_forget()
         self.warn_frame.pack_forget()
+        self.restock_frame.pack_forget()
 
         self.btn_tab_supplier.configure(fg_color="#95a5a6")
         self.btn_tab_payment.configure(fg_color="#95a5a6")
         self.btn_tab_stats.configure(fg_color="#95a5a6")
         self.btn_tab_warn.configure(fg_color="#95a5a6")
+        self.btn_tab_restock.configure(fg_color="#95a5a6")
 
         if tab_name == "supplier":
             self.supplier_frame.pack(fill="both", expand=True)
@@ -768,6 +777,10 @@ class SupplierFrame(ctk.CTkFrame):
             self.warn_frame.pack(fill="both", expand=True)
             self.btn_tab_warn.configure(fg_color="#347ab8")
             self.refresh_warnings()
+        elif tab_name == "restock":
+            self.restock_frame.pack(fill="both", expand=True)
+            self.btn_tab_restock.configure(fg_color="#347ab8")
+            self.restock_frame.refresh()
 
     def _reset_supplier(self):
         self.entry_s_search.delete(0, "end")
