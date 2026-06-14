@@ -29,7 +29,10 @@ plt.rcParams["axes.unicode_minus"] = False
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import database as db
+from services.payment_service import PaymentService
+from services.supplier_service import SupplierService
+from services.stats_service import StatsService
+from dal.purchase_dal import get_stock_purchases
 from restock_frame import RestockFrame
 
 
@@ -105,7 +108,7 @@ class SupplierDialog(ctk.CTkToplevel):
         ctk.CTkButton(btn_frm, text="取消", width=100, fg_color="gray", command=self.destroy).pack(side="left", padx=10)
 
     def _load_data(self):
-        row = db.get_supplier_by_id(self.supplier_id)
+        row = SupplierService.get_supplier_by_id(self.supplier_id)
         if row:
             self.entry_code.insert(0, row["supplier_code"])
             self.entry_name.insert(0, row["supplier_name"])
@@ -149,9 +152,9 @@ class SupplierDialog(ctk.CTkToplevel):
         }
 
         if self.supplier_id:
-            ok, msg = db.update_supplier(self.supplier_id, data)
+            ok, msg = SupplierService.update_supplier(self.supplier_id, data)
         else:
-            ok, msg = db.add_supplier(data)
+            ok, msg = SupplierService.add_supplier(data)
 
         if ok:
             messagebox.showinfo("成功", msg, parent=self)
@@ -185,7 +188,7 @@ class PaymentRecordDialog(ctk.CTkToplevel):
             self._auto_fill_purchase()
 
     def _load_suppliers(self):
-        rows = db.get_suppliers()
+        rows = SupplierService.get_suppliers()
         values = []
         for r in rows:
             if r["supplier_status"] == "正常":
@@ -207,7 +210,7 @@ class PaymentRecordDialog(ctk.CTkToplevel):
         self._purchase_map = {}
         values = []
         if supplier_id:
-            rows = db.get_unpaid_purchases(supplier_id)
+            rows = PaymentService.get_unpaid_purchases(supplier_id)
             for r in rows:
                 paid = r["paid_amount"] or 0
                 total = r["total_amount"] or 0
@@ -231,7 +234,7 @@ class PaymentRecordDialog(ctk.CTkToplevel):
         purchase_label = self.combo_purchase.get().strip()
         purchase_id = self._purchase_map.get(purchase_label)
         if purchase_id:
-            rows = db.get_unpaid_purchases()
+            rows = PaymentService.get_unpaid_purchases()
             for r in rows:
                 if r["id"] == purchase_id:
                     paid = r["paid_amount"] or 0
@@ -339,12 +342,12 @@ class PaymentRecordDialog(ctk.CTkToplevel):
         ctk.CTkButton(btn_frm, text="取消", width=100, fg_color="gray", command=self.destroy).pack(side="left", padx=10)
 
     def _load_data(self):
-        row = db.get_payment_record_by_id(self.record_id)
+        row = PaymentService.get_payment_record_by_id(self.record_id)
         if not row:
             return
 
         supplier_label = None
-        all_suppliers = db.get_suppliers()
+        all_suppliers = SupplierService.get_suppliers()
         for s in all_suppliers:
             label = f"{s['supplier_code']} - {s['supplier_name']}"
             if s["id"] == row["supplier_id"]:
@@ -366,7 +369,7 @@ class PaymentRecordDialog(ctk.CTkToplevel):
                 purchase_label = label
                 break
         if not purchase_label:
-            p = db.get_purchase_payment_by_purchase_id(row["purchase_id"])
+            p = PaymentService.get_purchase_payment_by_purchase_id(row["purchase_id"])
             if p:
                 paid = p["paid_amount"] or 0
                 total = p["total_amount"] or 0
@@ -384,7 +387,7 @@ class PaymentRecordDialog(ctk.CTkToplevel):
         self.entry_paid.configure(state="normal")
         self.entry_remaining.configure(state="normal")
 
-        pp = db.get_purchase_payment_by_purchase_id(row["purchase_id"])
+        pp = PaymentService.get_purchase_payment_by_purchase_id(row["purchase_id"])
         if pp:
             self.entry_payable.delete(0, "end")
             self.entry_payable.insert(0, f"{pp['payable_amount']:.2f}")
@@ -448,10 +451,10 @@ class PaymentRecordDialog(ctk.CTkToplevel):
             remaining = 0
 
         if self.record_id:
-            pp = db.get_purchase_payment_by_purchase_id(purchase_id)
+            pp = PaymentService.get_purchase_payment_by_purchase_id(purchase_id)
             if pp:
                 other_paid = (pp["paid_amount"] or 0) - payment_amount
-                old_rec = db.get_payment_record_by_id(self.record_id)
+                old_rec = PaymentService.get_payment_record_by_id(self.record_id)
                 if old_rec:
                     other_paid = (pp["paid_amount"] or 0) - old_rec["payment_amount"]
                 if other_paid + payment_amount > (pp["payable_amount"] or 0) + 0.01:
@@ -462,9 +465,9 @@ class PaymentRecordDialog(ctk.CTkToplevel):
                 messagebox.showerror("错误", f"付款金额({payment_amount:.2f})不能超过剩余未付金额({remaining:.2f})", parent=self)
                 return
 
-        pp = db.get_purchase_payment_by_purchase_id(purchase_id)
+        pp = PaymentService.get_purchase_payment_by_purchase_id(purchase_id)
         if not pp:
-            sp = db.get_stock_purchases(keyword="")
+            sp = get_stock_purchases(keyword="")
             purchase_data = None
             for p in sp:
                 if p["id"] == purchase_id:
@@ -480,7 +483,7 @@ class PaymentRecordDialog(ctk.CTkToplevel):
                     "payment_status": "未付款",
                     "remark": "",
                 }
-                ok, msg = db.add_purchase_payment(data)
+                ok, msg = PaymentService.add_purchase_payment(data)
                 if not ok:
                     messagebox.showerror("错误", msg, parent=self)
                     return
@@ -501,9 +504,9 @@ class PaymentRecordDialog(ctk.CTkToplevel):
         }
 
         if self.record_id:
-            ok, msg = db.update_payment_record(self.record_id, data)
+            ok, msg = PaymentService.update_payment_record_with_summary(self.record_id, data)
         else:
-            ok, msg = db.add_payment_record(data)
+            ok, msg = PaymentService.add_payment_record_with_summary(data)
 
         if ok:
             messagebox.showinfo("成功", msg, parent=self)
@@ -644,13 +647,13 @@ class PaymentDialog(ctk.CTkToplevel):
         self.tree_records.bind("<Double-1>", lambda e: self._edit_payment_record())
 
     def _load_data(self):
-        row = db.get_purchase_payment_by_id(self.payment_id)
+        row = PaymentService.get_purchase_payment_by_id(self.payment_id)
         if not row:
             return
 
         self._current_purchase_id = row["purchase_id"]
 
-        detail = db.get_purchase_payment_by_purchase_id(self._current_purchase_id)
+        detail = PaymentService.get_purchase_payment_by_purchase_id(self._current_purchase_id)
         if detail:
             self.lbl_supplier.configure(text=f"{detail['supplier_code']} - {detail['supplier_name']}")
             self.lbl_material.configure(text=f"{detail['material_code']} - {detail['material_name']}")
@@ -673,7 +676,7 @@ class PaymentDialog(ctk.CTkToplevel):
         if not self._current_purchase_id:
             return
 
-        detail = db.get_purchase_payment_by_purchase_id(self._current_purchase_id)
+        detail = PaymentService.get_purchase_payment_by_purchase_id(self._current_purchase_id)
         if detail:
             payable = detail["payable_amount"] or 0
             paid = detail["paid_amount"] or 0
@@ -695,7 +698,7 @@ class PaymentDialog(ctk.CTkToplevel):
             self.progress_bar.set(progress / 100)
             self.lbl_progress.configure(text=f"{progress:.1f}%")
 
-        records = db.get_payment_records_by_purchase(self._current_purchase_id)
+        records = PaymentService.get_payment_records_by_purchase(self._current_purchase_id)
         self.lbl_installment_count.configure(text=f"{len(records)}次")
 
     def _refresh_records(self):
@@ -705,7 +708,7 @@ class PaymentDialog(ctk.CTkToplevel):
         if not self._current_purchase_id:
             return
 
-        records = db.get_payment_records_by_purchase(self._current_purchase_id)
+        records = PaymentService.get_payment_records_by_purchase(self._current_purchase_id)
         for idx, r in enumerate(records, 1):
             self.tree_records.insert(
                 "",
@@ -735,7 +738,7 @@ class PaymentDialog(ctk.CTkToplevel):
     def _add_payment_record(self):
         if not self._current_purchase_id:
             return
-        detail = db.get_purchase_payment_by_purchase_id(self._current_purchase_id)
+        detail = PaymentService.get_purchase_payment_by_purchase_id(self._current_purchase_id)
         if not detail:
             return
         PaymentRecordDialog(
@@ -757,7 +760,7 @@ class PaymentDialog(ctk.CTkToplevel):
     def _delete_payment_record(self):
         record_id = self._get_selected_record_id()
         if record_id and messagebox.askyesno("确认", "确定要删除该付款流水记录吗?", parent=self):
-            ok, msg = db.delete_payment_record(record_id)
+            ok, msg = PaymentService.delete_payment_record_with_summary(record_id)
             if ok:
                 messagebox.showinfo("成功", msg, parent=self)
                 self._on_record_changed()
@@ -1420,7 +1423,7 @@ class SupplierFrame(ctk.CTkFrame):
 
         keyword = self.entry_s_search.get().strip()
         status = self.combo_s_status.get()
-        rows = db.get_suppliers(keyword, status)
+        rows = SupplierService.get_suppliers(keyword, status)
 
         for r in rows:
             tag = ""
@@ -1451,7 +1454,7 @@ class SupplierFrame(ctk.CTkFrame):
         end_date = self.date_p_end.get_date().strftime("%Y-%m-%d")
         keyword = self.entry_p_search.get().strip()
         status = self.combo_p_status.get()
-        rows = db.get_purchase_payments(start_date, end_date, keyword, None, status)
+        rows = PaymentService.get_purchase_payments_enriched(start_date, end_date, keyword, None, status)
 
         total_payable = 0.0
         total_paid = 0.0
@@ -1499,7 +1502,7 @@ class SupplierFrame(ctk.CTkFrame):
         self.lbl_p_count.configure(text=f"记录数: {len(rows)}")
 
     def _load_installment_suppliers(self):
-        rows = db.get_suppliers()
+        rows = SupplierService.get_suppliers()
         values = ["全部"]
         for r in rows:
             if r["supplier_status"] == "正常":
@@ -1523,14 +1526,14 @@ class SupplierFrame(ctk.CTkFrame):
         supplier_label = self.combo_inst_supplier.get().strip()
         supplier_id = None
         if supplier_label and supplier_label != "全部":
-            all_suppliers = db.get_suppliers()
+            all_suppliers = SupplierService.get_suppliers()
             for s in all_suppliers:
                 if f"{s['supplier_code']} - {s['supplier_name']}" == supplier_label:
                     supplier_id = s["id"]
                     break
 
         status = self.combo_inst_status.get()
-        data = db.get_installment_progress(supplier_id=supplier_id, status=status)
+        data = PaymentService.get_installment_progress(supplier_id=supplier_id, status=status)
 
         total_payable = 0.0
         total_paid = 0.0
@@ -1662,7 +1665,7 @@ class SupplierFrame(ctk.CTkFrame):
         PaymentDialog(self, payment_id=payment_id, on_save=self.refresh_installment)
 
     def _load_flow_suppliers(self):
-        rows = db.get_suppliers()
+        rows = SupplierService.get_suppliers()
         values = ["全部"]
         for r in rows:
             values.append(f"{r['supplier_code']} - {r['supplier_name']}")
@@ -1691,7 +1694,7 @@ class SupplierFrame(ctk.CTkFrame):
         supplier_label = self.combo_flow_supplier.get().strip()
         supplier_id = None
         if supplier_label and supplier_label != "全部":
-            all_suppliers = db.get_suppliers()
+            all_suppliers = SupplierService.get_suppliers()
             for s in all_suppliers:
                 if f"{s['supplier_code']} - {s['supplier_name']}" == supplier_label:
                     supplier_id = s["id"]
@@ -1700,7 +1703,7 @@ class SupplierFrame(ctk.CTkFrame):
         keyword = self.entry_flow_search.get().strip()
         payment_method = self.combo_flow_method.get().strip()
 
-        data = db.get_payment_records_with_cumulative(
+        data = PaymentService.get_payment_records_with_cumulative(
             supplier_id=supplier_id,
             start_date=start_date,
             end_date=end_date,
@@ -1742,7 +1745,7 @@ class SupplierFrame(ctk.CTkFrame):
                 tags=(tag,),
             )
 
-        stats = db.get_payment_summary_stats(start_date, end_date)
+        stats = PaymentService.get_payment_summary(start_date, end_date)
         self.lbl_flow_count.configure(text=f"付款笔数: {len(data)}")
         self.lbl_flow_total.configure(text=f"付款总金额: ¥{total_amount:.2f}")
         self.lbl_flow_unpaid.configure(text=f"待付总额: ¥{stats['total_unpaid']:.2f}")
@@ -1804,7 +1807,7 @@ class SupplierFrame(ctk.CTkFrame):
 
     def _draw_payable_vs_paid_chart(self):
         months = int(self.combo_trend_months.get())
-        data = db.get_monthly_payable_vs_paid(months)
+        data = PaymentService.get_monthly_payable_vs_paid(months)
         self.fig_compare.clear()
         ax = self.fig_compare.add_subplot(111)
         if data and (any(d["payable_amount"] > 0 for d in data) or any(d["paid_amount"] > 0 for d in data)):
@@ -1851,7 +1854,7 @@ class SupplierFrame(ctk.CTkFrame):
         self.canvas_compare.draw()
 
     def _batch_update_overdue(self):
-        result = db.batch_update_overdue_status()
+        result = PaymentService.batch_update_overdue_status()
         messagebox.showinfo(
             "更新完成",
             f"共检查 {result['total_checked']} 条记录，\n更新逾期状态 {result['updated_count']} 条。"
@@ -1860,7 +1863,7 @@ class SupplierFrame(ctk.CTkFrame):
 
     def _export_trend_data(self):
         months = int(self.combo_trend_months.get())
-        data = db.get_monthly_payable_vs_paid(months)
+        data = PaymentService.get_monthly_payable_vs_paid(months)
         if not data:
             messagebox.showwarning("提示", "没有可导出的数据")
             return
@@ -1883,7 +1886,7 @@ class SupplierFrame(ctk.CTkFrame):
 
     def _draw_payment_trend(self):
         months = int(self.combo_trend_months.get())
-        data = db.get_monthly_payment_trend(months)
+        data = PaymentService.get_monthly_payment_trend(months)
         self.fig_pay_trend.clear()
         ax = self.fig_pay_trend.add_subplot(111)
         if data and any(d["total_payment"] > 0 for d in data):
@@ -1921,34 +1924,21 @@ class SupplierFrame(ctk.CTkFrame):
         months = int(self.combo_trend_months.get())
         start_date = (date.today().replace(day=1) - timedelta(days=(months - 1) * 30)).strftime("%Y-%m-%d")
         end_date = date.today().strftime("%Y-%m-%d")
-        records = db.get_payment_records(start_date=start_date, end_date=end_date)
+        stats_data = StatsService.get_payment_method_stats(start_date=start_date, end_date=end_date)
 
-        method_map = {}
-        total_amount = 0.0
-        for r in records:
-            method = r["payment_method"] or "未指定"
-            amt = r["payment_amount"] or 0
-            total_amount += amt
-            if method not in method_map:
-                method_map[method] = {"count": 0, "amount": 0.0}
-            method_map[method]["count"] += 1
-            method_map[method]["amount"] += amt
-
-        sorted_methods = sorted(method_map.items(), key=lambda x: x[1]["amount"], reverse=True)
-        for idx, (method, info) in enumerate(sorted_methods, 1):
-            ratio = (info["amount"] / total_amount * 100) if total_amount > 0 else 0
+        for info in stats_data["methods"]:
             self.tree_method.insert(
                 "",
                 "end",
                 values=(
-                    f"#{idx}",
-                    method,
+                    f"#{info['rank']}",
+                    info["method"],
                     info["count"],
                     f"¥{info['amount']:.2f}",
-                    f"{ratio:.1f}%",
+                    f"{info['ratio']:.1f}%",
                 ),
             )
-        self.lbl_method_info.configure(text=f"共{len(records)}笔 | 总金额¥{total_amount:.2f}")
+        self.lbl_method_info.configure(text=f"共{stats_data['total_records']}笔 | 总金额¥{stats_data['total_amount']:.2f}")
 
     def _refresh_supplier_pay_rank(self):
         for item in self.tree_supplier_pay.get_children():
@@ -1957,35 +1947,23 @@ class SupplierFrame(ctk.CTkFrame):
         months = int(self.combo_trend_months.get())
         start_date = (date.today().replace(day=1) - timedelta(days=(months - 1) * 30)).strftime("%Y-%m-%d")
         end_date = date.today().strftime("%Y-%m-%d")
-        records = db.get_payment_records(start_date=start_date, end_date=end_date)
+        rank_data = StatsService.get_supplier_payment_rank(start_date=start_date, end_date=end_date, top_n=20)
 
-        sup_map = {}
-        for r in records:
-            key = (r["supplier_code"] or "", r["supplier_name"] or "未知供应商")
-            amt = r["payment_amount"] or 0
-            if key not in sup_map:
-                sup_map[key] = {"count": 0, "amount": 0.0}
-            sup_map[key]["count"] += 1
-            sup_map[key]["amount"] += amt
-
-        sorted_sups = sorted(sup_map.items(), key=lambda x: x[1]["amount"], reverse=True)
-        total = 0.0
-        for idx, ((code, name), info) in enumerate(sorted_sups[:20], 1):
-            total += info["amount"]
-            tag = "top3" if idx <= 3 else ""
+        for info in rank_data["rankings"]:
+            tag = "top3" if info["rank"] <= 3 else ""
             self.tree_supplier_pay.insert(
                 "",
                 "end",
                 values=(
-                    f"#{idx}",
-                    code,
-                    name,
+                    f"#{info['rank']}",
+                    info["code"],
+                    info["name"],
                     info["count"],
                     f"¥{info['amount']:.2f}",
                 ),
                 tags=(tag,),
             )
-        self.lbl_supplier_pay_info.configure(text=f"Top{min(len(sorted_sups), 20)} | 合计¥{total:.2f}")
+        self.lbl_supplier_pay_info.configure(text=f"Top{min(rank_data['total_suppliers'], 20)} | 合计¥{rank_data['total_amount']:.2f}")
 
     def refresh_due(self):
         for item in self.tree_due.get_children():
@@ -1993,7 +1971,7 @@ class SupplierFrame(ctk.CTkFrame):
 
         days_ahead = int(self.combo_due_days.get())
         due_type = self.combo_due_type.get()
-        data = db.get_upcoming_due_payments(days_ahead=days_ahead)
+        data = PaymentService.get_upcoming_due_payments(days_ahead=days_ahead)
 
         if due_type == "仅逾期":
             data = [d for d in data if d["is_overdue"]]
@@ -2116,8 +2094,15 @@ class SupplierFrame(ctk.CTkFrame):
         success = 0
         for payment_id in checked:
             data = {"remark": "已标记处理"}
-            result = db.update_purchase_payment(payment_id, data)
-            if result["success"]:
+            pay_row = PaymentService.get_purchase_payment_by_id(payment_id)
+            if pay_row:
+                data["supplier_id"] = pay_row["supplier_id"]
+                data["payable_amount"] = pay_row["payable_amount"]
+                data["paid_amount"] = pay_row["paid_amount"]
+                data["payment_status"] = pay_row["payment_status"]
+                data["payment_date"] = pay_row["payment_date"]
+            ok, msg = PaymentService.update_purchase_payment(payment_id, data)
+            if ok:
                 success += 1
         messagebox.showinfo("完成", f"成功标记 {success}/{len(checked)} 条记录")
         self.refresh_due()
@@ -2189,8 +2174,8 @@ class SupplierFrame(ctk.CTkFrame):
                         "voucher_no": "",
                         "remark": "批量快捷付款",
                     }
-                    result = db.add_payment_record(data)
-                    if result["success"]:
+                    ok, msg = PaymentService.add_payment_record_with_summary(data)
+                    if ok:
                         success += 1
             messagebox.showinfo("完成", f"成功登记 {success}/{len(checked)} 条付款记录")
             self.refresh_due()
@@ -2220,7 +2205,7 @@ class SupplierFrame(ctk.CTkFrame):
     def _delete_supplier(self):
         sid = self._get_selected_supplier_id()
         if sid and messagebox.askyesno("确认", "确定要删除该供应商吗?", parent=self):
-            ok, msg = db.delete_supplier(sid)
+            ok, msg = SupplierService.delete_supplier(sid)
             if ok:
                 messagebox.showinfo("成功", msg, parent=self)
                 self.refresh_suppliers()
@@ -2238,7 +2223,7 @@ class SupplierFrame(ctk.CTkFrame):
     def _delete_payment(self):
         pid = self._get_selected_payment_id()
         if pid and messagebox.askyesno("确认", "确定要删除该付款记录吗?", parent=self):
-            ok, msg = db.delete_purchase_payment(pid)
+            ok, msg = PaymentService.delete_purchase_payment(pid)
             if ok:
                 messagebox.showinfo("成功", msg, parent=self)
                 self._on_payment_change()

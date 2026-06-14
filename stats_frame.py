@@ -28,7 +28,8 @@ plt.rcParams["axes.unicode_minus"] = False
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import database as db
+from services.stats_service import StatsService
+from services.payment_service import PaymentService
 
 
 class StatsFrame(ctk.CTkFrame):
@@ -70,7 +71,7 @@ class StatsFrame(ctk.CTkFrame):
 
         ctk.CTkLabel(top, text="返工率阈值:").pack(side="right")
         self.entry_threshold = ctk.CTkEntry(top, width=60)
-        current = db.get_rework_rate_threshold()
+        current = StatsService.get_rework_rate_threshold()
         self.entry_threshold.insert(0, str(current))
         self.entry_threshold.pack(side="right", padx=5)
         ctk.CTkLabel(top, text="(0~1)").pack(side="right")
@@ -289,7 +290,7 @@ class StatsFrame(ctk.CTkFrame):
         except ValueError:
             messagebox.showerror("错误", "阈值必须是数字", parent=self)
             return
-        ok, msg = db.set_rework_rate_threshold(val)
+        ok, msg = StatsService.set_rework_rate_threshold(val)
         if ok:
             messagebox.showinfo("成功", msg, parent=self)
             self.refresh_all()
@@ -297,8 +298,8 @@ class StatsFrame(ctk.CTkFrame):
             messagebox.showerror("错误", msg, parent=self)
 
     def _check_warnings(self):
-        warnings = db.get_7day_rework_warnings()
-        threshold = db.get_rework_rate_threshold()
+        warnings = StatsService.get_7day_rework_warnings()
+        threshold = StatsService.get_rework_rate_threshold()
         self.text_warn.delete("1.0", "end")
         if warnings:
             self.lbl_warn_count.configure(text=f"共 {len(warnings)} 项材料超过阈值 ({threshold*100:.0f}%)", text_color="#d9534f")
@@ -312,7 +313,7 @@ class StatsFrame(ctk.CTkFrame):
             self.lbl_warn_count.configure(text="无预警，所有材料正常 ✓", text_color="#28a745")
             self.text_warn.insert("end", "近7天所有材料返工率均在阈值以下。")
 
-        lows = db.get_low_stock_materials()
+        lows = StatsService.get_low_stock_materials()
         self.text_low.delete("1.0", "end")
         if lows:
             self.lbl_low_count.configure(text=f"共 {len(lows)} 项材料库存不足", text_color="#e67e22")
@@ -332,8 +333,8 @@ class StatsFrame(ctk.CTkFrame):
 
         start_date = self.date_start.get_date().strftime("%Y-%m-%d")
         end_date = self.date_end.get_date().strftime("%Y-%m-%d")
-        threshold = db.get_rework_rate_threshold()
-        stats = db.get_material_usage_stats(start_date, end_date)
+        threshold = StatsService.get_rework_rate_threshold()
+        stats = StatsService.get_material_usage_stats(start_date, end_date)
 
         for s in stats:
             tag = ""
@@ -359,7 +360,7 @@ class StatsFrame(ctk.CTkFrame):
 
     def _draw_trend(self):
         days = int(self.combo_days.get())
-        data = db.get_daily_usage_trend(days)
+        data = StatsService.get_daily_usage_trend(days)
         self.fig_trend.clear()
         ax = self.fig_trend.add_subplot(111)
         if data:
@@ -383,7 +384,7 @@ class StatsFrame(ctk.CTkFrame):
     def _draw_usage(self):
         start_date = self.date_start.get_date().strftime("%Y-%m-%d")
         end_date = self.date_end.get_date().strftime("%Y-%m-%d")
-        stats = db.get_material_usage_stats(start_date, end_date)
+        stats = StatsService.get_material_usage_stats(start_date, end_date)
         self.fig_usage.clear()
         ax = self.fig_usage.add_subplot(111)
         valid = [s for s in stats if s["total_used"] > 0][:10]
@@ -432,7 +433,7 @@ class StatsFrame(ctk.CTkFrame):
         for item in self.tree_loss30.get_children():
             self.tree_loss30.delete(item)
 
-        loss_data = db.get_30day_material_loss_cost()
+        loss_data = StatsService.get_30day_material_loss_cost()
         materials = loss_data.get("materials", [])
 
         self.lbl_loss30_summary.configure(
@@ -466,7 +467,7 @@ class StatsFrame(ctk.CTkFrame):
 
         start_date = self.date_start.get_date().strftime("%Y-%m-%d")
         end_date = self.date_end.get_date().strftime("%Y-%m-%d")
-        order_data = db.get_unit_order_material_cost(start_date, end_date)
+        order_data = StatsService.get_unit_order_material_cost(start_date, end_date)
 
         self.lbl_order_count.configure(text=f"共 {len(order_data)} 个订单")
 
@@ -496,7 +497,7 @@ class StatsFrame(ctk.CTkFrame):
 
         start_date = self.date_start.get_date().strftime("%Y-%m-%d")
         end_date = self.date_end.get_date().strftime("%Y-%m-%d")
-        rank_data = db.get_high_loss_high_cost_materials(start_date, end_date, top_n=10)
+        rank_data = StatsService.get_high_loss_high_cost_materials(start_date, end_date, top_n=10)
 
         for idx, r in enumerate(rank_data, 1):
             tag = ""
